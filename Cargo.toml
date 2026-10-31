@@ -6,6 +6,7 @@ description = "Asynchronous task processing service with a shared queue"
 
 [dependencies]
 axum = { version = "0.8", features = ["json"] }
+dotenvy = "0.15"
 futures-lite = "2"
 lapin = "4.12"
 serde = { version = "1", features = ["derive"] }

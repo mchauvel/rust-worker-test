@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tracing_subscriber::{EnvFilter, fmt};
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _ = dotenvy::from_filename_override(".env").ok();
+
     let _ = fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .with_target(false)
