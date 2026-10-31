@@ -1,23 +1,20 @@
-use std::{
-    error::Error,
-    sync::Arc,
-    time::Duration,
-};
+use std::{error::Error, sync::Arc, time::Duration};
 
 use futures_lite::StreamExt;
 use lapin::{
+    Connection, ConnectionProperties,
     options::{
         BasicAckOptions, BasicConsumeOptions, BasicQosOptions, BasicRejectOptions,
         QueueDeclareOptions,
     },
     types::{AMQPValue, FieldTable, LongString, ShortString},
-    Connection, ConnectionProperties,
 };
 use serde::Deserialize;
 use tokio::{sync::watch, task::JoinSet};
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    action::{dispatch, Action},
+    action::{Action, dispatch},
     status::RunnerHealth,
 };
 
@@ -31,10 +28,9 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self, BoxError> {
-        let address = std::env::var("AMQP_ADDR")
-            .unwrap_or_else(|_| "amqp://127.0.0.1:5672/%2f".to_owned());
-        let queue_name = std::env::var("AMQP_QUEUE")
-            .unwrap_or_else(|_| "tasks".to_owned());
+        let address =
+            std::env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://127.0.0.1:5672/%2f".to_owned());
+        let queue_name = std::env::var("AMQP_QUEUE").unwrap_or_else(|_| "tasks".to_owned());
         let concurrency = std::env::var("WORKER_CONCURRENCY")
             .unwrap_or_else(|_| "4".to_owned())
             .parse::<u16>()?;
@@ -60,11 +56,33 @@ impl Config {
             concurrency,
         })
     }
+
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    pub fn queue_name(&self) -> &str {
+        &self.queue_name
+    }
+
+    pub fn concurrency(&self) -> u16 {
+        self.concurrency
+    }
 }
 
 #[derive(Deserialize)]
 struct TaskMessage {
-    action: Action,
+    action: String,
+    #[serde(default)]
+    release_name: Option<String>,
+    #[serde(default)]
+    chart: Option<String>,
+    #[serde(default)]
+    namespace: Option<String>,
+    #[serde(default)]
+    values: Vec<String>,
+    #[serde(default)]
+    set: Vec<String>,
 }
 
 struct ActiveTask(Arc<RunnerHealth>);
@@ -95,7 +113,7 @@ pub async fn run(
         health.set_connecting();
         if let Err(error) = consume(&config, &health, &mut shutdown).await {
             health.set_disconnected();
-            eprintln!("MQ connection or consumer failed: {error}; retrying in 5s");
+            error!(amqp_addr = %config.address, queue_name = %config.queue_name, error = %error, "MQ connection or consumer failed; retrying in 5s");
 
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(5)) => {}
@@ -114,6 +132,7 @@ async fn consume(
     health: &Arc<RunnerHealth>,
     shutdown: &mut watch::Receiver<bool>,
 ) -> Result<(), BoxError> {
+    info!(amqp_addr = %config.address, queue_name = %config.queue_name, concurrency = %config.concurrency, "connecting to RabbitMQ");
     let connection = Connection::connect(&config.address, ConnectionProperties::default()).await?;
     let channel = connection.create_channel().await?;
     channel
@@ -121,6 +140,7 @@ async fn consume(
         .await?;
 
     let dead_letter_queue = format!("{}.dead", config.queue_name);
+    info!(queue_name = %config.queue_name, dead_letter_queue = %dead_letter_queue, "declaring RabbitMQ queues");
     channel
         .queue_declare(
             dead_letter_queue.clone().into(),
@@ -162,10 +182,7 @@ async fn consume(
         )
         .await?;
     health.set_waiting();
-    println!(
-        "Consuming RabbitMQ queue '{}' with concurrency {}.",
-        config.queue_name, config.concurrency
-    );
+    info!(queue_name = %config.queue_name, concurrency = %config.concurrency, "consumer started; waiting for messages");
     let mut tasks = JoinSet::new();
 
     loop {
@@ -197,10 +214,14 @@ async fn consume(
         };
         let delivery = delivery?;
 
-        let message = match parse_action(&delivery.data) {
-            Ok(message) => message,
+        debug!(
+            payload_size = delivery.data.len(),
+            "message received from queue"
+        );
+        let action = match parse_action(&delivery.data) {
+            Ok(action) => action,
             Err(error) => {
-                eprintln!("Rejecting invalid task message: {error}");
+                warn!(payload_size = delivery.data.len(), error = %error, "rejecting invalid task message");
                 delivery
                     .reject(BasicRejectOptions { requeue: false })
                     .await?;
@@ -209,25 +230,71 @@ async fn consume(
             }
         };
 
-        let task_health = Arc::clone(&health);
+        let action_label = match &action {
+            Action::Deploy(_) => "deploy",
+            Action::Undeploy(_) => "undeploy",
+        };
+        let task_health = Arc::clone(health);
         tasks.spawn(async move {
             let _active_task = ActiveTask::new(task_health);
-            if let Err(error) = dispatch(message.action).await {
-                eprintln!("Task failed and will be dead-lettered: {error}");
+            info!(action = action_label, "starting action execution");
+            if let Err(error) = dispatch(action).await {
+                error!(action = action_label, error = %error, "action execution failed; dead-lettering message");
                 delivery
                     .reject(BasicRejectOptions { requeue: false })
                     .await?;
                 return Ok(());
             }
 
+            info!(action = action_label, "action executed successfully; acknowledging message");
             delivery.ack(BasicAckOptions::default()).await?;
             Ok::<(), BoxError>(())
         });
     }
 }
 
-fn parse_action(payload: &[u8]) -> Result<TaskMessage, String> {
-    serde_json::from_slice(payload).map_err(|error| error.to_string())
+fn parse_action(payload: &[u8]) -> Result<Action, String> {
+    let message: TaskMessage =
+        serde_json::from_slice(payload).map_err(|error| error.to_string())?;
+
+    match message.action.as_str() {
+        "deploy" => {
+            let release_name = message
+                .release_name
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "deploy.release_name is required".to_string())?;
+            let chart = message
+                .chart
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "deploy.chart is required".to_string())?;
+            let namespace = message
+                .namespace
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "default".to_string());
+            Ok(Action::Deploy(crate::action::DeployPayload {
+                release_name,
+                chart,
+                namespace,
+                values: message.values,
+                set: message.set,
+            }))
+        }
+        "undeploy" => {
+            let release_name = message
+                .release_name
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "undeploy.release_name is required".to_string())?;
+            let namespace = message
+                .namespace
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "default".to_string());
+            Ok(Action::Undeploy(crate::action::UndeployPayload {
+                release_name,
+                namespace,
+            }))
+        }
+        action => Err(format!("unknown action '{action}'")),
+    }
 }
 
 #[cfg(test)]
@@ -237,8 +304,11 @@ mod tests {
 
     #[test]
     fn parses_action_from_json_message() {
-        let message = parse_action(br#"{"action":"deploy"}"#).unwrap();
-        assert_eq!(message.action, Action::Deploy);
+        let action = parse_action(
+            br#"{"action":"deploy","release_name":"demo","chart":"./chart","namespace":"prod"}"#,
+        )
+        .unwrap();
+        assert!(matches!(action, Action::Deploy(_)));
     }
 
     #[test]
@@ -248,7 +318,9 @@ mod tests {
 
     #[test]
     fn parses_undeploy_action() {
-        let message = parse_action(br#"{"action":"undeploy"}"#).unwrap();
-        assert_eq!(message.action, Action::Undeploy);
+        let action =
+            parse_action(br#"{"action":"undeploy","release_name":"demo","namespace":"prod"}"#)
+                .unwrap();
+        assert!(matches!(action, Action::Undeploy(_)));
     }
 }

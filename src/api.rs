@@ -1,11 +1,6 @@
 use std::time::Instant;
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    routing::get,
-    Json, Router,
-};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde::Serialize;
 use std::sync::Arc;
 

@@ -33,12 +33,18 @@ L'adresse d'écoute se configure avec `HTTP_ADDR` (par défaut `127.0.0.1:8080`)
 - `AMQP_QUEUE` : nom de la file durable (par défaut `tasks`).
 - `WORKER_CONCURRENCY` : nombre maximal de tâches simultanées par instance (par défaut `4`). Le prefetch RabbitMQ est aligné sur cette limite.
 
-Le corps du message doit être un objet JSON avec un champ `action` égal à `deploy` ou `undeploy`, par exemple :
+Le corps du message doit être un objet JSON avec un champ `action` égal à `deploy` ou `undeploy` et les paramètres attendus par l’action :
 
 ```json
-{"action":"deploy"}
+{"action":"deploy","release_name":"demo","chart":"./chart","namespace":"prod","values":["./values.yaml"],"set":["image.tag=1.2.3"]}
 ```
 
-Chaque action est dispatchée vers son module dédié dans `src/action/`. `deploy` et `undeploy` affichent actuellement un message placeholder; `deploy` ne lance pas encore Helm. Les messages invalides ou dont le traitement échoue sont rejetés vers la file de dead-letter `<AMQP_QUEUE>.dead`. Après une erreur de connexion, le consommateur réessaie toutes les cinq secondes.
+```json
+{"action":"undeploy","release_name":"demo","namespace":"prod"}
+```
+
+Chaque action est dispatchée vers son module dédié dans `src/action/`. `deploy` et `undeploy` invoquent désormais le binaire Helm avec des arguments séparés, sans passer par un shell, et avec un timeout explicite. Les messages invalides ou dont le traitement échoue sont rejetés vers la file de dead-letter `<AMQP_QUEUE>.dead`. Après une erreur de connexion, le consommateur réessaie toutes les cinq secondes.
+
+Les variables d’environnement `HELM_BIN` (par défaut `helm`) et `HELM_TIMEOUT_SECS` (par défaut `600`) permettent de personnaliser le binaire Helm et la durée maximale d’exécution d’une action.
 
 RabbitMQ distribue chaque livraison non acquittée à un seul consommateur actif et la limite de prefetch borne le travail en cours par instance. L'acquittement intervient après le traitement : une panne peut donc provoquer une redélivrance. Cette garantie est « au moins une fois », pas « exactement une fois »; les actions réelles devront être idempotentes. Une exclusion stricte même en cas de partition réseau demandera un registre de tâches partagé avec bail et fencing token.

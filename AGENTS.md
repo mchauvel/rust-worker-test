@@ -20,8 +20,8 @@ The current implementation uses Tokio, Axum, and Lapin. Treat the code and `READ
 
 - RabbitMQ settings: `AMQP_ADDR` defaults to `amqp://127.0.0.1:5672/%2f`; `AMQP_QUEUE` defaults to `tasks`.
 - `WORKER_CONCURRENCY` sets the maximum in-flight tasks per process, defaults to `4`, and must be greater than zero. RabbitMQ prefetch is aligned with this limit. Total capacity is the per-process limit multiplied by the number of instances.
-- Messages are JSON objects with a finite `action` value. Currently, `deploy` and `undeploy` are supported.
-- Actions are dispatched through the `Action` enum to one handler file per action. Both handlers are currently placeholders; `deploy` does not run Helm yet.
+- Messages are JSON objects with a finite `action` value. `deploy` and `undeploy` are supported and carry structured payload fields such as `release_name`, `chart`, `namespace`, `values`, and `set`.
+- Actions are dispatched through the `Action` enum to one handler file per action. `deploy` and `undeploy` invoke Helm directly with validated arguments and a bounded timeout; they do not build shell strings.
 - Invalid messages and failed actions are rejected without requeue and routed to `<AMQP_QUEUE>.dead`. MQ connection or consumer errors are retried after five seconds.
 - A delivery is acknowledged after its handler succeeds. This is at-least-once processing: a crash or connection loss can cause redelivery. Do not promise exactly-once execution. Make real actions idempotent.
 - Competing RabbitMQ consumers distribute an unacknowledged delivery to one active consumer under normal operation. RabbitMQ alone cannot guarantee that an action will never run concurrently twice across a network partition. Strict exclusion requires a shared durable job registry with leases and fencing tokens.
