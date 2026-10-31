@@ -102,6 +102,20 @@ mod tests {
     }
 
     #[test]
+    fn deploy_payload_accepts_artifactory_tarball_url() {
+        let payload = DeployPayload {
+            release_name: "sereca".to_string(),
+            chart: "https://artifactory.example.com/artifactory/charts/sereca-1.2.3.tgz"
+                .to_string(),
+            namespace: "prod".to_string(),
+            values: vec![],
+            set: vec![],
+        };
+
+        assert!(payload.validate().is_ok());
+    }
+
+    #[test]
     fn undeploy_payload_requires_non_empty_release_name() {
         let payload = UndeployPayload {
             release_name: String::new(),

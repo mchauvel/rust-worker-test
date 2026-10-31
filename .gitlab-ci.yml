@@ -1,0 +1,23 @@
+stages:
+  - build
+
+variables:
+  ARTIFACTORY_URL: "https://artifactory.example.com"
+  IMAGE_REPO: "docker-local/task-worker"
+  IMAGE_TAG: "${CI_COMMIT_SHA}"
+
+build_image:
+  stage: build
+  image: quay.io/buildah/stable:latest
+  before_script:
+    - mkdir -p /etc/pki/ca-trust/source/anchors
+    - echo "${ARTIFACTORY_CA_BUNDLE}" > /etc/pki/ca-trust/source/anchors/artifactory-ca.crt
+    - update-ca-trust
+    - echo "${ARTIFACTORY_PASSWORD}" | buildah login -u "${ARTIFACTORY_USER}" --password-stdin "${ARTIFACTORY_URL}"
+  script:
+    - buildah bud --format docker -t "${ARTIFACTORY_URL}/${IMAGE_REPO}:${IMAGE_TAG}" -f Dockerfile .
+    - buildah push --format docker "${ARTIFACTORY_URL}/${IMAGE_REPO}:${IMAGE_TAG}"
+  tags:
+    - linux
+  only:
+    - main

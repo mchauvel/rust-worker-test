@@ -36,12 +36,14 @@ L'adresse d'écoute se configure avec `HTTP_ADDR` (par défaut `127.0.0.1:8080`)
 Le corps du message doit être un objet JSON avec un champ `action` égal à `deploy` ou `undeploy` et les paramètres attendus par l’action :
 
 ```json
-{"action":"deploy","release_name":"demo","chart":"./chart","namespace":"prod","values":["./values.yaml"],"set":["image.tag=1.2.3"]}
+{"action":"deploy","release_name":"demo","chart":"https://artifactory.example.com/artifactory/charts/sereca-1.2.3.tgz","namespace":"prod","values":["./values.yaml"],"set":["image.tag=1.2.3"]}
 ```
 
 ```json
 {"action":"undeploy","release_name":"demo","namespace":"prod"}
 ```
+
+Le champ `chart` peut être un chemin local, un dépôt Helm ou directement un tarball `.tgz` téléchargeable, par exemple un lien Artifactory. Le worker passe cette valeur telle quelle à Helm via `helm upgrade --install`, ce qui fonctionne pour les chart packagés en URL directe.
 
 Chaque action est dispatchée vers son module dédié dans `src/action/`. `deploy` et `undeploy` invoquent désormais le binaire Helm avec des arguments séparés, sans passer par un shell, et avec un timeout explicite. Les messages invalides ou dont le traitement échoue sont rejetés vers la file de dead-letter `<AMQP_QUEUE>.dead`. Après une erreur de connexion, le consommateur réessaie toutes les cinq secondes.
 
