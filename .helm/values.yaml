@@ -1,0 +1,68 @@
+replicaCount: 1
+
+image:
+  repository: artifactory.example.com/docker-local/task-worker
+  pullPolicy: IfNotPresent
+  tag: ""
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+taskBackend: rabbitmq
+workerConcurrency: 4
+http:
+  port: 8080
+helm:
+  bin: /usr/local/bin/helm
+  timeoutSeconds: 600
+logging:
+  rustLog: info
+
+serviceAccount:
+  create: true
+  name: ""
+  automount: true
+
+service:
+  type: ClusterIP
+  port: 8080
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# Add backend addresses and secrets here, preferably through secretKeyRef.
+# Example:
+# extraEnv:
+#   - name: AMQP_ADDR
+#     valueFrom:
+#       secretKeyRef:
+#         name: task-worker-credentials
+#         key: amqp-url
+extraEnv: []
+extraEnvFrom: []
+
+# Scratch space for Helm caches and the optional local file backend.
+fileTaskDir: /var/lib/task-worker/tasks

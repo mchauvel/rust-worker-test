@@ -2,6 +2,7 @@
     "chat.tools.terminal.autoApprove": {
         "C:\\Users\\mad_s\\.cargo\\bin\\cargo.exe": true,
         "ForEach-Object": true,
-        "git check-ignore": true
+        "git check-ignore": true,
+        "Get-Command": true
     }
 }

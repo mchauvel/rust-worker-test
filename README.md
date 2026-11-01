@@ -17,6 +17,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 Le code applicatif est séparé entre une bibliothèque (`src/lib.rs`), utilisable et testable indépendamment, et un exécutable (`src/main.rs`). Tokio fournit le runtime asynchrone multi-thread.
 
+## Déploiement Kubernetes
+
+Un chart Helm minimal est disponible dans `.helm/`. Il installe le worker, expose l'API interne de statut et configure les probes de santé. Les instructions d'installation, d'image Artifactory, de secrets backend et de permissions Kubernetes sont dans [.helm/README.md](.helm/README.md).
+
 ## API de supervision
 
 - `GET /health/live` : confirme que le processus répond.
