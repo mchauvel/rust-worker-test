@@ -1,0 +1,8 @@
+{
+  "action": "deploy",
+  "release_name": "demo",
+  "chart": "https://artifactory.example.com/artifactory/helm-local/demo-1.0.0.tgz",
+  "namespace": "default",
+  "values": [],
+  "set": []
+}

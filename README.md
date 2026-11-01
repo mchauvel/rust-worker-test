@@ -27,7 +27,7 @@ L'adresse d'écoute se configure avec `HTTP_ADDR` (par défaut `127.0.0.1:8080`)
 
 ## Backend de tâches
 
-`TASK_BACKEND` choisit la source des tâches : `rabbitmq` (par défaut) ou `elasticsearch`. Les deux backends consomment le même contrat JSON `deploy` / `undeploy` décrit ci-dessous; ils ne doivent pas être activés simultanément pour le même ensemble de tâches.
+`TASK_BACKEND` choisit la source des tâches : `rabbitmq` (par défaut), `elasticsearch` ou `file`. Les backends consomment le même contrat JSON `deploy` / `undeploy` décrit ci-dessous; ils ne doivent pas être activés simultanément pour le même ensemble de tâches.
 
 ## Consommation RabbitMQ
 
@@ -108,3 +108,11 @@ PUT tasks/_doc/deploy-sereca-001
 Les états utilisés sont `pending`, `processing`, `completed` et `dead`. La réservation utilise `if_seq_no` / `if_primary_term`, puis un bail avec jeton propriétaire; un crash laisse le document récupérable à l'expiration du bail. La livraison reste « au moins une fois » : une panne après l'effet Helm mais avant le statut `completed` peut provoquer une nouvelle exécution. Les handlers doivent donc rester idempotents. Le rôle Elasticsearch du worker doit être limité aux opérations nécessaires sur cet index.
 
 Pour le développement local, copier `.env.example` vers `.env` et modifier `TASK_BACKEND` et les paramètres du backend choisi. En CI et en production, injecter les secrets par l'environnement (variables GitLab / secrets du runtime), pas dans `.env` ni dans l'image.
+
+## Backend fichier local
+
+Le backend `file` permet de tester le worker sur un poste sans RabbitMQ ni Elasticsearch. Il stocke un document JSON par tâche sous `FILE_TASK_DIR` (par défaut `.local/tasks`) et utilise les répertoires `pending/`, `processing/`, `completed/` et `dead/`. Le répertoire est ignoré par Git.
+
+Configurer `TASK_BACKEND=file`; `FILE_TASK_LEASE_SECS` (défaut `900`) doit dépasser `HELM_TIMEOUT_SECS` (défaut `600`), `FILE_MAX_ATTEMPTS` définit le maximum d'essais (défaut `5`) et `FILE_RETRY_DELAY_SECS` le délai de reprise de base (défaut `5`, avec backoff exponentiel plafonné à cinq minutes).
+
+Pour tester, déposer un fichier comme `.local/tasks/pending/deploy-sereca-001.json` avec le même JSON de tâche que pour RabbitMQ. Les claims sont protégés par un verrou inter-processus local; plusieurs processus peuvent partager le même disque local, mais ce backend ne doit pas servir de file distribuée sur un partage réseau ni en production. La livraison reste au moins une fois; les actions doivent rester idempotentes.
