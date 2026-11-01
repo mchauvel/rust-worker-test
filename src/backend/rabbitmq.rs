@@ -9,13 +9,13 @@ use lapin::{
     },
     types::{AMQPValue, FieldTable, LongString, ShortString},
 };
-use serde::Deserialize;
 use tokio::{sync::watch, task::JoinSet};
 use tracing::{debug, error, info, warn};
 
 use crate::{
     action::{Action, dispatch},
     status::RunnerHealth,
+    task_message::parse_action,
 };
 
 type BoxError = Box<dyn Error + Send + Sync>;
@@ -56,33 +56,6 @@ impl Config {
             concurrency,
         })
     }
-
-    pub fn address(&self) -> &str {
-        &self.address
-    }
-
-    pub fn queue_name(&self) -> &str {
-        &self.queue_name
-    }
-
-    pub fn concurrency(&self) -> u16 {
-        self.concurrency
-    }
-}
-
-#[derive(Deserialize)]
-struct TaskMessage {
-    action: String,
-    #[serde(default)]
-    release_name: Option<String>,
-    #[serde(default)]
-    chart: Option<String>,
-    #[serde(default)]
-    namespace: Option<String>,
-    #[serde(default)]
-    values: Vec<String>,
-    #[serde(default)]
-    set: Vec<String>,
 }
 
 struct ActiveTask(Arc<RunnerHealth>);
@@ -250,77 +223,5 @@ async fn consume(
             delivery.ack(BasicAckOptions::default()).await?;
             Ok::<(), BoxError>(())
         });
-    }
-}
-
-fn parse_action(payload: &[u8]) -> Result<Action, String> {
-    let message: TaskMessage =
-        serde_json::from_slice(payload).map_err(|error| error.to_string())?;
-
-    match message.action.as_str() {
-        "deploy" => {
-            let release_name = message
-                .release_name
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| "deploy.release_name is required".to_string())?;
-            let chart = message
-                .chart
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| "deploy.chart is required".to_string())?;
-            let namespace = message
-                .namespace
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "default".to_string());
-            Ok(Action::Deploy(crate::action::DeployPayload {
-                release_name,
-                chart,
-                namespace,
-                values: message.values,
-                set: message.set,
-            }))
-        }
-        "undeploy" => {
-            let release_name = message
-                .release_name
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| "undeploy.release_name is required".to_string())?;
-            let namespace = message
-                .namespace
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "default".to_string());
-            Ok(Action::Undeploy(crate::action::UndeployPayload {
-                release_name,
-                namespace,
-            }))
-        }
-        action => Err(format!("unknown action '{action}'")),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_action;
-    use crate::action::Action;
-
-    #[test]
-    fn parses_action_from_json_message() {
-        let action = parse_action(
-            br#"{"action":"deploy","release_name":"demo","chart":"./chart","namespace":"prod"}"#,
-        )
-        .unwrap();
-        assert!(matches!(action, Action::Deploy(_)));
-    }
-
-    #[test]
-    fn rejects_unknown_action() {
-        assert!(parse_action(br#"{"action":"unknown"}"#).is_err());
-    }
-
-    #[test]
-    fn parses_undeploy_action() {
-        let action =
-            parse_action(br#"{"action":"undeploy","release_name":"demo","namespace":"prod"}"#)
-                .unwrap();
-        assert!(matches!(action, Action::Undeploy(_)));
     }
 }

@@ -54,7 +54,10 @@ pub(super) async fn run(payload: DeployPayload) -> Result<(), Box<dyn Error + Se
 
     let args = build_helm_upgrade_args(&payload, timeout_secs);
     let mut command = Command::new(&helm_bin);
-    command.args(&args).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    command
+        .args(&args)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
 
     let mut child = command.spawn()?;
     let result = timeout(Duration::from_secs(timeout_secs), child.wait()).await;

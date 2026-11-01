@@ -1,7 +1,8 @@
 mod action;
 mod api;
-mod queue;
+mod backend;
 mod status;
+mod task_message;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -21,15 +22,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .unwrap_or_else(|_| "127.0.0.1:8080".to_owned())
         .parse::<SocketAddr>()?;
     let listener = tokio::net::TcpListener::bind(address).await?;
-    let queue_config = queue::Config::from_env()?;
+    let backend_config = backend::Config::from_env()?;
     let health = Arc::new(status::RunnerHealth::new());
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     tracing::info!(
         http_addr = %address,
-        amqp_addr = %queue_config.address(),
-        queue_name = %queue_config.queue_name(),
-        concurrency = %queue_config.concurrency(),
+        task_backend = backend_config.name(),
         "starting task worker"
     );
 
@@ -40,7 +39,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let _ = signal_tx.send(true);
         },
     );
-    let worker = tokio::spawn(queue::run(queue_config, health, shutdown_rx));
+    let worker = tokio::spawn(backend_config.run(health, shutdown_rx));
 
     let server_result = server.await;
     let _ = shutdown_tx.send(true);
